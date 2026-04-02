@@ -1,7 +1,12 @@
 [
   {
-    "url": "https://example.com/product",
-    "email": "user@example.com",
+    "url": "https://www.rugvista.se/p/serafina-100x450-cm-avlang-beige-extra-stor-ullmatta-CVD27082",
+    "email": "henrikadolfsson7@gmail.com",
+    "history_path": "history/example-product.jsonl"
+  },
+  {
+    "url": "https://www.shirtfactory.se/sv/skjortor/p7821/grand-twill-strykfri-vit-skjorta",
+    "email": "henrikadolfsson7@gmail.com",
     "history_path": "history/example-product.jsonl"
   }
 ]
