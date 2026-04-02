@@ -1,0 +1,7 @@
+[
+  {
+    "url": "https://example.com/product",
+    "email": "user@example.com",
+    "history_path": "history/example.jsonl"
+  }
+]

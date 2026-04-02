@@ -81,7 +81,23 @@ def get_price_from_url_text(content: str) -> Optional[Decimal]:
     return _normalize_price_text(match.group("price"))
 
 
+def load_urls_config(config_path: str) -> list[dict]:
+    """Load list of URL configs from JSON file."""
+    if not os.path.exists(config_path):
+        return []
+    
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_urls_config(config_path: str, configs: list[dict]) -> None:
+    """Save list of URL configs to JSON file."""
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(configs, f, indent=2, ensure_ascii=False)
+
+
 def _load_price_history(history_path: str) -> list[dict]:
+    """Load price history from JSONL file."""
     if not os.path.exists(history_path):
         return []
 
@@ -98,6 +114,7 @@ def _load_price_history(history_path: str) -> list[dict]:
 
 
 def _save_price_entry(history_path: str, entry: dict) -> None:
+    """Append a price entry to the JSONL history file."""
     directory = os.path.dirname(history_path)
     if directory:
         os.makedirs(directory, exist_ok=True)
@@ -106,6 +123,7 @@ def _save_price_entry(history_path: str, entry: dict) -> None:
 
 
 def send_price_alert(email_to: str, price: Decimal, change_status: str, old_price: Optional[Decimal] = None) -> None:
+    """Send email alert for price status."""
     smtp_server = os.getenv("SMTP_SERVER", "localhost")
     smtp_port = int(os.getenv("SMTP_PORT", "25"))
     smtp_user = os.getenv("SMTP_USERNAME")
@@ -117,6 +135,12 @@ def send_price_alert(email_to: str, price: Decimal, change_status: str, old_pric
     if change_status == "unchanged":
         subject = f"Price is still the same: {price}"
         body = f"Price is still the same: {price}."
+    elif change_status == "no_history":
+        subject = "No price history yet"
+        body = "No price history available yet."
+    elif change_status == "immediate_report":
+        subject = f"Current price: {price}"
+        body = f"Current price: {price}."
     else:
         subject = f"Price changed to {price}"
         body = f"Price changed to {price}."
@@ -128,19 +152,28 @@ def send_price_alert(email_to: str, price: Decimal, change_status: str, old_pric
     message["To"] = email_to
     message.set_content(body)
 
-    if use_tls:
+    if not smtp_server:
+        print("SMTP_SERVER is not configured; skipping email notification.")
+        return
+
+    try:
         smtp = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
-        smtp.starttls()
-    else:
-        smtp = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+        if use_tls:
+            smtp.starttls()
 
-    with smtp:
-        if smtp_user and smtp_pass:
-            smtp.login(smtp_user, smtp_pass)
-        smtp.send_message(message)
+        with smtp:
+            if smtp_user and smtp_pass:
+                smtp.login(smtp_user, smtp_pass)
+            smtp.send_message(message)
+    except Exception as exc:
+        print(f"Warning: Failed to send email alert ({exc}). Continuing without email.")
 
 
-def check_price_daily(url: str, history_path: str, email_to: str) -> None:
+def check_price_daily(config: dict) -> None:
+    """Check price for a single URL configuration."""
+    url = config["url"]
+    history_path = config["history_path"]
+    email_to = config["email"]
     today = date.today().isoformat()
     price = get_price_from_url(url)
 
@@ -166,12 +199,32 @@ def check_price_daily(url: str, history_path: str, email_to: str) -> None:
     _save_price_entry(history_path, entry)
 
 
-def run_daemon(url: str, history_path: str, email_to: str) -> None:
-    while True:
+def send_immediate_report(configs: list[dict]) -> None:
+    """Send immediate status report for all URLs."""
+    for config in configs:
+        url = config["url"]
+        history_path = config["history_path"]
+        email_to = config["email"]
         try:
-            check_price_daily(url, history_path, email_to)
+            history = _load_price_history(history_path)
+            if not history:
+                send_price_alert(email_to, Decimal("0"), "no_history", None)
+                continue
+            last_entry = history[-1]
+            price = Decimal(str(last_entry.get("price")))
+            send_price_alert(email_to, price, "immediate_report", None)
         except Exception as exc:
-            print(f"Daily check failed: {exc}")
+            print(f"Failed to send report for {url}: {exc}")
+
+
+def run_daemon(configs: list[dict]) -> None:
+    """Continuously monitor prices and send daily reports."""
+    while True:
+        for config in configs:
+            try:
+                check_price_daily(config)
+            except Exception as exc:
+                print(f"Daily check failed for {config['url']}: {exc}")
 
         now = datetime.now()
         next_run = (now + timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
@@ -179,6 +232,7 @@ def run_daemon(url: str, history_path: str, email_to: str) -> None:
         if wait_seconds <= 0:
             wait_seconds = 24 * 60 * 60
 
+        print(f"Next check in {wait_seconds/3600:.1f} hours")
         time.sleep(wait_seconds)
 
 
@@ -188,9 +242,11 @@ if __name__ == "__main__":
     def print_usage() -> None:
         print("Usage:")
         print("  python price_checker.py <url>")
-        print("  python price_checker.py monitor <url> <history_file> <email_to>")
+        print("  python price_checker.py monitor <config_file>")
+        print("  python price_checker.py send-report <config_file>")
         print("Example:")
-        print("  python price_checker.py monitor https://... /tmp/price_history.jsonl henrikadolfsson@gmail.com")
+        print("  python price_checker.py monitor urls.json")
+        print("  python price_checker.py send-report urls.json")
         sys.exit(1)
 
     if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
@@ -204,24 +260,32 @@ if __name__ == "__main__":
         except Exception as exc:
             print(f"Error while fetching price: {exc}")
             sys.exit(2)
-    elif len(sys.argv) == 5 and sys.argv[1] == "monitor":
-        _, _, url, history_file, email_to = sys.argv
+    elif len(sys.argv) == 3 and sys.argv[1] == "monitor":
+        _, command, config_file = sys.argv
         try:
-            print(f"Starting monitor for {url}, history {history_file}, alert {email_to}")
-            run_daemon(url, history_file, email_to)
+            configs = load_urls_config(config_file)
+            if not configs:
+                print(f"No configurations found in {config_file}")
+                sys.exit(1)
+            print(f"Starting monitor for {len(configs)} URLs")
+            run_daemon(configs)
         except KeyboardInterrupt:
             print("Stopped by user")
             sys.exit(0)
         except Exception as exc:
             print(f"Monitor failed: {exc}")
             sys.exit(3)
-    elif len(sys.argv) == 5 and sys.argv[1] == "check":
-        _, _, url, history_file, email_to = sys.argv
+    elif len(sys.argv) == 3 and sys.argv[1] == "send-report":
+        _, command, config_file = sys.argv
         try:
-            check_price_daily(url, history_file, email_to)
-            print("Checked price for today and stored history.")
+            configs = load_urls_config(config_file)
+            if not configs:
+                print(f"No configurations found in {config_file}")
+                sys.exit(1)
+            send_immediate_report(configs)
+            print("Immediate reports sent.")
         except Exception as exc:
-            print(f"Check failed: {exc}")
+            print(f"Send report failed: {exc}")
             sys.exit(3)
     else:
         print_usage()
