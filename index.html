@@ -288,10 +288,6 @@
                         <input type="text" value="${escapeHtml(item.url)}" placeholder="https://..." onchange="updateUrl(${index}, 'url', this.value)">
                     </div>
                     <div>
-                        <label>Email:</label>
-                        <input type="email" value="${escapeHtml(item.email)}" onchange="updateUrl(${index}, 'email', this.value)">
-                    </div>
-                    <div>
                         <label>History File:</label>
                         <input type="text" value="${escapeHtml(item.history_path)}" placeholder="history/item.jsonl" onchange="updateUrl(${index}, 'history_path', this.value)">
                     </div>
@@ -317,7 +313,7 @@
         }
 
         function addUrl() {
-            urls.push({ url: '', email: '', history_path: '' });
+            urls.push({ url: '', history_path: '' });
             renderUrls();
         }
 
@@ -331,7 +327,7 @@
         async function saveUrls() {
             // Validate
             for (let url of urls) {
-                if (!url.url || !url.email || !url.history_path) {
+                if (!url.url || !url.history_path) {
                     showStatus('All fields are required for each URL', true);
                     return;
                 }
@@ -341,7 +337,8 @@
             const repo = document.getElementById('repo').value;
             const file = document.getElementById('file').value;
             
-            const content = btoa(JSON.stringify(urls, null, 2));
+            const sanitized = urls.map(({ url, history_path }) => ({ url, history_path }));
+            const content = btoa(JSON.stringify(sanitized, null, 2));
             const current = await apiCall(`/repos/${owner}/${repo}/contents/${file}`);
             if (!current) return;
             
